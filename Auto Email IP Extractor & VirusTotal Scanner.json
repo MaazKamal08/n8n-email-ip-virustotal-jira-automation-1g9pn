@@ -1,0 +1,439 @@
+{
+  "name": "Auto Email IP Extractor & VirusTotal Scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "sender": "titanium-soc@rapidcompute.com"
+        },
+        "options": {
+          "dataPropertyAttachmentsPrefixName": "attachment_",
+          "downloadAttachments": false
+        }
+      },
+      "id": "e291da8b-d965-4f9a-8b30-505501c9efdd",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1952,
+        16
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nYtTqJpvcZCJXcSP",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n    const data = item.json.data;\n    const impacted = item.json.impacted || \"N/A\";\n\n    if (!data || !data.attributes) {\n        return { json: { error: \"No data found\", impacted } };\n    }\n\n    const attrs = data.attributes;\n    let stats = attrs.last_analysis_stats;\n\n    // Build manually if needed\n    if (!stats && attrs.last_analysis_results) {\n        const engines = Object.values(attrs.last_analysis_results);\n        stats = { malicious: 0, suspicious: 0, harmless: 0, undetected: 0 };\n        for (const eng of engines) {\n            const cat = eng.category || \"undetected\";\n            if (stats[cat] !== undefined) stats[cat]++;\n        }\n    }\n\n    const malicious = stats.malicious || 0;\n    const suspicious = stats.suspicious || 0;\n    const harmless = stats.harmless || 0;\n    const undetected = stats.undetected || 0;\n    const total = malicious + suspicious + harmless + undetected;\n    const detectionRate = total > 0 ? ((malicious / total) * 100).toFixed(2) + \"%\" : \"0%\";\n\n    const reputation = attrs.reputation || 0;\n    const country = attrs.country || \"Unknown\";\n    const asn = attrs.asn || 0;\n    const status = malicious > 0 ? \"MALICIOUS\" : \"CLEAN\";\n    const checkedAt = attrs.last_analysis_date\n        ? new Date(attrs.last_analysis_date * 1000).toISOString()\n        : new Date().toISOString();\n\n    return {\n        json: {\n            Origin: data.id || \"Unknown\",\n            Impacted: impacted,\n            Malicious: malicious,\n            Suspicious: suspicious,\n            Harmless: harmless,\n            Undetected: undetected,\n            DetectionRate: detectionRate,\n            Reputation: reputation,\n            VT_Country: country,\n            ASN: asn,\n            Status: status,\n            CheckedAt: checkedAt\n        }\n    };\n});\n"
+      },
+      "id": "3298dd1d-c003-46b1-8808-ac3eb84ba50e",
+      "name": "Parse VirusTotal Results1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// // Extract all IPv4 addresses from the text of the first incoming item\n// const text = items[0].json.text || \"\";\n\n// const ipRegex = /\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b/g;\n\n// // Match all IP addresses\n// let ips = text.match(ipRegex) || [];\n\n// // Remove duplicates\n// ips = [...new Set(ips)];\n\n// // Filter out local/private ranges\n// ips = ips.filter(ip => !/^10\\.|^172\\.(1[6-9]|2\\d|3[0-1])\\.|^192\\.168\\.|^127\\./.test(ip));\n\n// return [{ json: { ips } }];\n// Get raw email text\nconst text = items[0].json.text || \"\";\n\n// Extract all IPv4 addresses\nconst ipRegex = /\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b/g;\nconst allIPs = text.match(ipRegex) || [];\n\n// Each row has 2 IPs in order: Origin first, Impacted second\n// So we'll group them in pairs\nconst pairs = [];\nfor (let i = 0; i < allIPs.length; i += 2) {\n  const origin = allIPs[i];\n  const impacted = allIPs[i + 1];\n  if (origin && impacted) {\n    pairs.push({ origin, impacted });\n  }\n}\n\n// Remove duplicates based on origin+impacted\nconst uniquePairs = Array.from(\n  new Map(pairs.map(p => [p.origin + p.impacted, p])).values()\n);\n\n// Output each pair as a separate item for next node\nreturn uniquePairs.map(p => ({ json: p }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        16
+      ],
+      "id": "4d4818a2-4e74-44cb-bda3-a0fc704c6e9d",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/ip_addresses/{{ $json.ip_address }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "virusTotalApi",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 15000
+            }
+          }
+        }
+      },
+      "id": "7bece86d-c3d3-4edc-a44a-6ca7eacb4c7a",
+      "name": "VirusTotal IP Check2",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        -1024,
+        16
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "virusTotalApi": {
+          "id": "TILlDGyknoNfeQvh",
+          "name": "VirusTotal account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ccf8e293-da95-410b-8e88-44b5430e7c21",
+              "leftValue": "={{ $json.Malicious }}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "7745325c-f8b4-483d-995e-f59349051ecb",
+              "leftValue": "={{ $json.Harmless }}",
+              "rightValue": 10,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "5cf70c89-5874-4f0c-ae88-07f9cd37aadb",
+              "leftValue": "={{ $json.Suspicious }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "64c54836-ce62-45b0-b549-9199b3e4d4bb",
+              "leftValue": "={{ $json.VT_Country}}",
+              "rightValue": "PK",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -480,
+        0
+      ],
+      "id": "7756e6c6-3226-4ec4-8510-8b8a4a25a32f",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "project": {
+          "__rl": true,
+          "value": "10026",
+          "mode": "list",
+          "cachedResultName": "Keenu ITSM"
+        },
+        "issueType": {
+          "__rl": true,
+          "value": "10002",
+          "mode": "list",
+          "cachedResultName": "Task"
+        },
+        "summary": "=Malicious IP Blocking ",
+        "additionalFields": {
+          "description": "=Dear team , kindly block the malicious Ips On our Firewall perementers \n{{ $json.jiraTable }}"
+        }
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -144,
+        176
+      ],
+      "id": "f4876ee3-d4b1-4b1d-8b4c-16eb90358b4e",
+      "name": "Create an issue",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "KGzlQEZ6MC1BNTVq",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Initialize Jira markdown table header\nlet jiraTable = \"||Origin||Impacted||Malicious||Suspicious||Harmless||Undetected||DetectionRate||Reputation||Country||Status||\\n\";\n\n// Loop through all items and populate rows\nfor (const item of items) {\n    const origin = item.json.Origin || item.json.IP || \"\";\n    const impacted = item.json.Impacted || \"N/A\";\n    const malicious = item.json.Malicious || 0;\n    const suspicious = item.json.Suspicious || 0;\n    const harmless = item.json.Harmless || 0;\n    const undetected = item.json.Undetected || 0;\n    const detectionRate = item.json.DetectionRate || \"0%\";\n    const reputation = item.json.Reputation || 0;\n    const country = item.json.VT_Country || \"\";\n    const status = item.json.Status || \"\";\n\n    jiraTable += `|${origin}|${impacted}|${malicious}|${suspicious}|${harmless}|${undetected}|${detectionRate}|${reputation}|${country}|${status}|\\n`;\n}\n\n// Return table string as JSON output\nreturn [{ json: { jiraTable } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        -16
+      ],
+      "id": "d071a7a7-f257-4d2a-ac0c-33ffd3450b5b",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b456391b-d91d-4934-a786-c380b027757a",
+              "name": "text",
+              "value": "={{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1568,
+        16
+      ],
+      "id": "eee20de1-1d63-4f8d-a6cb-3d217ed78487",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.filter(item => {\n  const subject = (item.json.subject || \"\").toLowerCase();\n  return (\n    subject.includes(\"threat list: inbound connection detected\")\n  );\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        16
+      ],
+      "id": "8b9a4d36-34ad-4e1a-b74c-18fb1c6dcfd0",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = [];\n\nconst pairs = $input.all(); // each item has {origin, impacted}\n\nfor (const item of pairs) {\n  const origin = item.json.origin;\n  const impacted = item.json.impacted;\n\n  if (origin) {\n    output.push({\n      json: {\n        ip_address: origin,\n        impacted: impacted\n      }\n    });\n  }\n}\n\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1264,
+        16
+      ],
+      "id": "fa5970bd-61a9-4acf-9bea-9c55cf98b154",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "spaceId": "=spaces/2QD3BcAAAAE",
+        "message": "=https://keenu.atlassian.net/browse/{{ $json.key }}",
+        "responseType": "freeText",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        80,
+        176
+      ],
+      "id": "8582594d-9641-4169-a4da-3314072b0920",
+      "name": "Send message and wait for response",
+      "webhookId": "13adb6cb-09d1-4241-a188-154f6e246a3a",
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "qyWvor5lMLj4tarI",
+          "name": "Chat account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -752,
+        -208
+      ],
+      "id": "7b3633ae-822f-467c-abf4-3623a98982c2",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse VirusTotal Results1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VirusTotal IP Check2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an issue": {
+      "main": [
+        [
+          {
+            "node": "Send message and wait for response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Create an issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "VirusTotal IP Check2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Parse VirusTotal Results1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ad431813-0460-4ef8-9df4-755150fdf0de",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3127e0702a73301f3dd2c5019e9732e437e6d3bef84a4f13fdb7f52d826473ea"
+  },
+  "id": "184mE663GBk8t7Cl",
+  "tags": [
+    {
+      "updatedAt": "2026-02-18T07:51:01.671Z",
+      "createdAt": "2026-02-18T07:51:01.671Z",
+      "id": "vOEmfA4A1Da5KywU",
+      "name": "Security Automation"
+    }
+  ]
+}
